@@ -1,0 +1,15 @@
+schedules:
+  - id: health-check-loop
+    cron: "*/5 * * * *"
+    workflow_ref: health-check
+    enabled: true
+
+  - id: hourly-summary
+    cron: "0 * * * *"
+    workflow_ref: hourly-summary
+    enabled: true
+
+  - id: weekly-sla-report
+    cron: "0 9 * * 1"
+    workflow_ref: weekly-sla-report
+    enabled: true

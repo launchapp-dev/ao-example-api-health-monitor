@@ -1,0 +1,42 @@
+default_workflow_ref: health-check
+
+workflows:
+  # ── Primary: every-5-minute health check ─────────────────────────────────────
+  - id: health-check
+    name: "API Health Check"
+    description: "Probe all configured endpoints, analyze health trends, manage incidents"
+    phases:
+      - probe-endpoints
+      - analyze-health:
+          on_verdict:
+            healthy:
+              target: _end
+            degraded:
+              target: manage-incidents
+            down:
+              target: manage-incidents
+      - manage-incidents
+
+  # ── Hourly: aggregate and refresh dashboard ───────────────────────────────────
+  - id: hourly-summary
+    name: "Hourly Summary"
+    description: "Aggregate probe data into hourly metrics and refresh the dashboard"
+    phases:
+      - aggregate-probes
+      - update-dashboard
+
+  # ── Weekly: SLA compliance report ─────────────────────────────────────────────
+  - id: weekly-sla-report
+    name: "Weekly SLA Report"
+    description: "Generate weekly SLA compliance report and file breach issues"
+    phases:
+      - collect-weekly-data
+      - generate-sla-report:
+          on_verdict:
+            compliant:
+              target: _end
+            breach:
+              target: file-sla-issues
+            at-risk:
+              target: file-sla-issues
+      - file-sla-issues

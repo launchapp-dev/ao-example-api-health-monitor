@@ -1,0 +1,23 @@
+github:
+  repo: "your-org/api-incidents"         # Where to create incident issues
+  labels_prefix: "api-monitor"           # Label prefix for all issues
+
+thresholds:
+  degraded:
+    error_rate_pct: 5                    # >5% error rate in last hour = degraded
+    latency_multiplier: 2.0              # >2x baseline latency = degraded
+  down:
+    error_rate_pct: 50                   # >50% error rate in last hour = down
+    consecutive_failures: 3              # 3 consecutive failures = down
+
+incident_rules:
+  create_after_consecutive_failures: 2   # Create issue after 2 consecutive bad probes
+  auto_resolve_after_healthy_probes: 3   # Close issue after 3 consecutive healthy probes
+  escalation_minutes: 30                 # Escalate severity after 30 minutes unresolved
+
+severity_mapping:
+  core-api: critical
+  auth-service: critical
+  user-services: high
+  integrations: medium
+  static: low

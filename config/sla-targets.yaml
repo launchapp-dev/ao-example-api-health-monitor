@@ -1,0 +1,30 @@
+# SLA targets per group and per endpoint
+defaults:
+  uptime_pct: 99.9
+  latency_p95_ms: 1000
+  latency_p99_ms: 2000
+
+groups:
+  core-api:
+    uptime_pct: 99.95
+    latency_p95_ms: 500
+    latency_p99_ms: 1000
+  user-services:
+    uptime_pct: 99.9
+    latency_p95_ms: 800
+    latency_p99_ms: 1500
+  integrations:
+    uptime_pct: 99.5
+    latency_p95_ms: 1500
+    latency_p99_ms: 3000
+  static:
+    uptime_pct: 99.99
+    latency_p95_ms: 200
+    latency_p99_ms: 500
+
+# Per-endpoint overrides take precedence over group defaults
+overrides:
+  auth-service:
+    uptime_pct: 99.99    # Auth must be highly available
+    latency_p95_ms: 300
+    latency_p99_ms: 600

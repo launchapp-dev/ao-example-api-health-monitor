@@ -1,0 +1,246 @@
+phases:
+  # ── health-check workflow phases ─────────────────────────────────────────────
+
+  probe-endpoints:
+    mode: command
+    command:
+      program: bash
+      args: ["-c", "bash scripts/probe-endpoints.sh"]
+      cwd_mode: project_root
+      timeout_secs: 120
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  analyze-health:
+    mode: agent
+    agent: health-analyzer
+    directive: |
+      Analyze the latest API health probe results and determine overall system status.
+
+      Steps:
+      1. Read data/probes/latest-summary.json for the most recent probe results
+      2. Scan data/probes/ directory and load the 12 most recent probe JSON files to build
+         a 1-hour window of historical data
+      3. Query the memory knowledge graph for stored baseline latencies per endpoint
+         (key pattern: "baseline:{endpoint-name}")
+      4. For each endpoint in the probe results:
+         - Compare current status_code against expected from config/endpoints.yaml
+         - Calculate error rate: (failed probes in window) / (total probes in window)
+         - Calculate current latency vs stored baseline (flag if > 2x baseline)
+         - Determine trend (improving/stable/degrading) from the time-ordered window
+      5. Identify any correlated failures across endpoints in the same group
+      6. Update memory knowledge graph: store updated baseline for each endpoint that is healthy
+         (use exponential moving average: new_baseline = 0.9 * old_baseline + 0.1 * current)
+      7. Write data/health-status.json:
+         {
+           "timestamp": "<ISO>",
+           "overall": "healthy | degraded | down",
+           "endpoints": {
+             "<name>": {
+               "status": "healthy | degraded | down",
+               "current_latency_ms": N,
+               "baseline_latency_ms": N,
+               "error_rate_1h": 0.05,
+               "trend": "stable"
+             }
+           }
+         }
+      8. Emit decision JSON as the final line of your output
+    capabilities:
+      mutates_state: true
+      writes_files: true
+      requires_commit: false
+    decision_contract:
+      required_fields: [verdict, affected_endpoints, error_rate, worst_latency_ms, reasoning]
+
+  manage-incidents:
+    mode: agent
+    agent: incident-manager
+    directive: |
+      Manage GitHub incident issues based on current health status. Only runs when
+      health status is "degraded" or "down".
+
+      Steps:
+      1. Read data/health-status.json — focus on endpoints with status != "healthy"
+      2. Read data/incidents/active.json — map of endpoint name -> GitHub issue number
+         (create this file with {} if it doesn't exist)
+      3. Read config/alerting.yaml — get github.repo and thresholds
+      4. For each endpoint with non-healthy status:
+         a. If NOT in active.json → create a new GitHub issue
+         b. If already in active.json → add a status update comment
+      5. For each endpoint in active.json that IS now healthy in health-status.json:
+         → Add resolution comment and close the issue
+         → Move from active.json to history.json (append, don't overwrite)
+      6. Save updated data/incidents/active.json
+      7. Append resolved incidents to data/incidents/history.json
+
+      GitHub issue format for new incidents:
+      Title: [INCIDENT] {endpoint-name}: {status} — {short reason}
+      Labels: incident, severity:{level}, endpoint:{name}
+      Body: Use this template:
+        ## Incident: {endpoint-name}
+        **Status:** {down|degraded}
+        **Detected:** {UTC timestamp}
+        **URL:** {endpoint url}
+
+        ### Error Details
+        {error description, status code, latency vs baseline}
+
+        ### Related Endpoints
+        {list any correlated failures}
+
+        ### Data
+        | Metric | Value |
+        |--------|-------|
+        | Error Rate | {pct}% |
+        | Current Latency | {ms}ms |
+        | Baseline Latency | {ms}ms |
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  # ── hourly-summary workflow phases ───────────────────────────────────────────
+
+  aggregate-probes:
+    mode: command
+    command:
+      program: bash
+      args: ["-c", "bash scripts/aggregate-hourly.sh"]
+      cwd_mode: project_root
+      timeout_secs: 60
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  update-dashboard:
+    mode: agent
+    agent: sla-reporter
+    directive: |
+      Generate the hourly dashboard update and status page.
+
+      Steps:
+      1. Read config/endpoints.yaml for endpoint list and expected behavior
+      2. Read config/sla-targets.yaml for uptime/latency targets
+      3. Read data/health-status.json for current endpoint statuses
+      4. Read hourly summaries from data/summaries/hourly/ — load last 24 hours
+         (files are organized as data/summaries/hourly/{YYYY-MM-DD}/{HH}.json)
+      5. Read data/incidents/active.json for open incidents
+
+      Generate output/dashboard.md with:
+      - Last updated timestamp
+      - System health score: "{N}/{total} endpoints healthy" + color indicator
+      - Per-endpoint table (Name | Status | 24h Uptime% | Avg Latency | P95 Latency | Open Incidents)
+      - 24-hour availability timeline: each hour as ✓ (100%), ⚠ (partial), ✗ (down)
+      - Active incidents section with endpoint, duration, severity
+
+      Generate output/status-page.md with:
+      - Clean, public-friendly format
+      - No internal URLs or infrastructure details
+      - Status indicator per service group (All Systems Operational / Partial Outage / Major Outage)
+      - Historical incident count for last 7 days
+    capabilities:
+      mutates_state: false
+      writes_files: true
+
+  # ── weekly-sla-report workflow phases ────────────────────────────────────────
+
+  collect-weekly-data:
+    mode: command
+    command:
+      program: bash
+      args: ["-c", "bash scripts/collect-weekly.sh"]
+      cwd_mode: project_root
+      timeout_secs: 60
+    capabilities:
+      mutates_state: true
+      writes_files: true
+
+  generate-sla-report:
+    mode: agent
+    agent: sla-reporter
+    directive: |
+      Generate the weekly SLA compliance report. Today's date determines the report period
+      (last 7 complete days ending yesterday).
+
+      Steps:
+      1. Read config/sla-targets.yaml for compliance thresholds
+      2. Read config/endpoints.yaml for endpoint metadata
+      3. Determine the report week: Sunday through Saturday of the past week
+      4. Load the weekly summary: data/summaries/weekly/{YYYY-MM-DD}.json
+         (date = the Monday of the report week)
+      5. Load incident history: data/incidents/history.json
+         Filter to incidents that started or ended within the report week
+      6. For each endpoint, compare actual metrics vs SLA targets:
+         - Uptime % vs uptime_pct target
+         - P95 latency vs latency_p95_ms target
+         - P99 latency vs latency_p99_ms target
+      7. Calculate MTTR (Mean Time to Resolve) for incidents in the week
+      8. Compare to previous week's summary if available
+
+      Write the report to output/reports/sla-{YYYY-MM-DD}.md:
+
+      # SLA Compliance Report — Week of {date}
+
+      ## Executive Summary
+      - Overall compliance: {N}/{total} endpoints met all SLA targets
+      - Breaches: {list}
+      - Total incidents: {N}, Avg MTTR: {duration}
+
+      ## SLA Compliance Matrix
+      | Endpoint | Uptime Target | Actual Uptime | P95 Target | Actual P95 | Status |
+      ...
+
+      ## Incident Log
+      For each incident: endpoint, started, resolved, duration, peak error rate, root cause
+
+      ## Trend Analysis
+      Week-over-week comparison table
+
+      ## Recommendations
+      Endpoints trending toward SLA breach and suggested actions
+
+      Emit the decision JSON as the final line of your output.
+    capabilities:
+      mutates_state: false
+      writes_files: true
+      requires_commit: false
+    decision_contract:
+      required_fields: [verdict, breached_endpoints, overall_uptime_pct, sla_target_pct, reasoning]
+
+  file-sla-issues:
+    mode: agent
+    agent: incident-manager
+    directive: |
+      Create GitHub issues summarizing weekly SLA breaches. Only runs when the SLA report
+      verdict is "breach" or "at-risk".
+
+      Steps:
+      1. Read the most recently generated SLA report from output/reports/ (newest file)
+      2. Read config/alerting.yaml for the GitHub repo to use
+      3. Parse out the breached endpoints and breach details from the report
+      4. Create a single GitHub issue summarizing the week's SLA status:
+
+      Title: [SLA Report] Week of {date}: {N} breach(es) detected
+      Labels: sla-report, sla-breach (if breach), sla-at-risk (if at-risk), weekly-report
+      Body:
+        ## Weekly SLA Report — {date range}
+
+        ### Summary
+        {executive summary from the report}
+
+        ### Breached Endpoints
+        | Endpoint | Metric | Target | Actual |
+        ...
+
+        ### Action Items
+        - [ ] Review {endpoint} — below uptime target
+        - [ ] Investigate {endpoint} — P95 latency exceeding threshold
+
+        ### Full Report
+        See output/reports/sla-{date}.md in the repository for complete details.
+
+      Do NOT create an issue if one for this week already exists (check issue search first).
+    capabilities:
+      mutates_state: true
+      writes_files: true

@@ -1,0 +1,45 @@
+endpoints:
+  - name: main-api
+    url: "https://api.example.com/health"
+    method: GET
+    expected_status: 200
+    expected_latency_ms: 500
+    tags: [critical, backend]
+    group: core-api
+
+  - name: auth-service
+    url: "https://auth.example.com/status"
+    method: GET
+    expected_status: 200
+    expected_latency_ms: 300
+    headers:
+      Accept: "application/json"
+    tags: [critical, auth]
+    group: core-api
+
+  - name: user-api
+    url: "https://api.example.com/v2/users/health"
+    method: GET
+    expected_status: 200
+    expected_latency_ms: 800
+    tags: [standard, backend]
+    group: user-services
+
+  - name: webhook-endpoint
+    url: "https://api.example.com/webhooks/health"
+    method: POST
+    body: '{"test": true}'
+    expected_status: 200
+    expected_latency_ms: 1000
+    headers:
+      Content-Type: "application/json"
+    tags: [standard, webhooks]
+    group: integrations
+
+  - name: cdn-assets
+    url: "https://cdn.example.com/health.txt"
+    method: GET
+    expected_status: 200
+    expected_latency_ms: 100
+    tags: [standard, cdn]
+    group: static

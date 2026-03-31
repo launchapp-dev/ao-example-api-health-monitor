@@ -1,0 +1,12 @@
+probe:
+  timeout_secs: 30           # Per-endpoint timeout
+  retries: 1                 # Retry once on failure before recording as error
+  retry_delay_ms: 2000       # Wait 2s before retry
+  user_agent: "AO-HealthMonitor/1.0"
+  follow_redirects: true
+  max_redirects: 3
+  verify_ssl: true
+  data_retention:
+    raw_probes_hours: 48     # Keep raw probe files for 48 hours
+    hourly_summaries_days: 90
+    weekly_summaries_days: 730
